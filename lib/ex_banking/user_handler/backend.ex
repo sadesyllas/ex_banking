@@ -178,7 +178,7 @@ defmodule ExBanking.UserHandler.Backend do
   def exists?(_, _user), do: :ok
 
   @doc """
-  Make sure that the user exists and the we have a valid pid to call GenServer.call on it.
+  Make sure that the user exists and that we have a valid pid to call GenServer.call on it.
 
   If all is ok, we make the call to the GenServer to get the result.
   """
