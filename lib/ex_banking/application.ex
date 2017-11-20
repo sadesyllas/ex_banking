@@ -11,10 +11,7 @@ defmodule ExBanking.Application do
 
     :ets.new(:backlog, ets_opts)
     :ets.new(:user_balances, ets_opts)
-    :ets.new(:user_handlers, ets_opts)
 
-    Supervisor.start_link([
-      ExBanking.UserHandler.Watcher
-    ], [strategy: :one_for_one])
+    Supervisor.start_link([], [strategy: :one_for_one])
   end
 end

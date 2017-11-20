@@ -89,11 +89,9 @@ defmodule ExBanking.UserHandler.Backend do
     result =
       with {:exists1, :ok} <- {:exists1, exists?(sender)},
           {:exists2, :ok} <- {:exists2, exists?(receiver)},
-          sender_pid <- get_pid(sender),
-          receiver_pid <- get_pid(receiver),
           {:backlog1, :ok} <- {:backlog1, try_add_backlog(sender)},
           {:backlog2, :ok} <- {:backlog2, try_add_backlog(receiver)} do
-        result = do_send(sender, sender_pid, receiver, receiver_pid, amount, currency)
+        result = do_send(sender, receiver, amount, currency)
         remove_backlog(sender)
         remove_backlog(receiver)
         result
@@ -114,39 +112,6 @@ defmodule ExBanking.UserHandler.Backend do
   ###########
   # HELPERS #
   ###########
-
-  def schedule_stale_check() do
-    # 30 seconds in milliseconds
-    stale_check_interval = Application.get_env(:ex_banking, :config)[:stale_check_interval] || 30000
-    Process.send_after(self(), :stale_check, stale_check_interval)
-  end
-
-  @doc """
-  Create a new user handler process or return the already created one.
-  """
-  @spec get_pid(user :: binary) :: pid
-  def get_pid(user)
-  def get_pid(user), do: get_pid(:ets.lookup(:backlog, user), user)
-  def get_pid([], _user), do: {:error, :user_does_not_exist}
-  def get_pid(_, user) do
-    {:ok, pid} = GenServer.start(UserHandler, nil)
-
-    # insert both {user, pid} and {pid, user} to optimize
-    # retrieval of the data by ExBanking.UserHandler.Watcher's
-    # :EXIT handling logic.
-    if :ets.insert_new(:user_handlers, {user, pid}) do
-      :ets.insert(:user_handlers, {pid, user})
-      Watcher.watch(pid)
-      GenServer.cast(pid, :init)
-      Logger.debug("Created new user handler process for #{user}")
-      pid
-    else
-      Process.exit(pid, :normal)
-      [{_, pid}] = :ets.lookup(:user_handlers, user)
-      Logger.debug("User handler process for #{user} already exists")
-      pid
-    end
-  end
 
   @spec try_add_backlog(user :: binary) :: :ok | banking_error
   def try_add_backlog(user) do
@@ -178,52 +143,28 @@ defmodule ExBanking.UserHandler.Backend do
   def exists?(_, _user), do: :ok
 
   @doc """
-  Make sure that the user exists and that we have a valid pid to call GenServer.call on it.
-
-  If all is ok, we make the call to the GenServer to get the result.
+  Make sure that the user exists before we do any transfers.
   """
   @spec execute_operation(user :: binary, operation :: tuple)
     :: success :: term | banking_error
-  def execute_operation(user, operation) do
+  def execute_operation(user, fun) do
     with :ok <- exists?(user),
-         pid <- get_pid(user),
          :ok <- try_add_backlog(user) do
-      result = execute_operation_do_call(user, pid, operation)
+      result = fun.()
       remove_backlog(user)
       result
     end
   end
 
   @doc """
-  Make the actual call as per the logic of execute_operation.
-  """
-  @spec execute_operation_do_call(user :: binary, pid :: pid, operation :: tuple,
-    call_timeout :: number, call_try :: number)
-      :: success :: term | banking_error
-  defp execute_operation_do_call(user, pid, operation, call_timeout \\ 5000, call_try \\ 1) do
-    try do
-      GenServer.call(pid, operation, call_timeout)
-    catch
-      :exit, {:noproc, _} ->
-          user |> get_pid() |> GenServer.call(operation, call_timeout)
-      :exit, {:timeout, _} when call_try <= 5 ->
-          execute_operation_do_call(user, pid, operation, min(call_timeout + (call_try * 150), 10000), call_try + 1)
-    end
-  end
-
-  @doc """
   Part of send which does the actual money tranfers.
   """
-  @spec do_send(sender :: binary, sender_pid :: pid,
-    receiver :: binary, receiver_pid :: pid,
-    amount :: float, currency :: binary)
-      :: {:ok, new_sender_balance :: float, new_receiver_balance :: float} | banking_error
-  defp do_send(sender, sender_pid, receiver, receiver_pid, amount, currency) do
+  @spec do_send(sender :: binary, receiver :: binary, amount :: float, currency :: binary)
+    :: {:ok, new_sender_balance :: float, new_receiver_balance :: float} | banking_error
+  defp do_send(sender, receiver, amount, currency) do
     with\
-      {:withdrawal, {:ok, sender_balance}} <-
-        {:withdrawal, execute_operation_do_call(sender, sender_pid, {:withdraw, sender, amount, currency})},
-      {:deposit, {:ok, receiver_balance}} <-
-        {:deposit, execute_operation_do_call(receiver, receiver_pid, {:deposit, receiver, amount, currency})}
+      {:withdrawal, {:ok, sender_balance}} <- {:withdrawal, withdraw(sender, amount, currency)},
+      {:deposit, {:ok, receiver_balance}} <- {:deposit, deposit(receiver, amount, currency)}
     do
       if sender === receiver do
         {:ok, receiver_balance, receiver_balance}
@@ -232,7 +173,7 @@ defmodule ExBanking.UserHandler.Backend do
       end
     else
       {:deposit, deposit_error} ->
-        execute_operation_do_call(sender, sender_pid, {:deposit, sender, amount, currency})
+        deposit(sender, amount, currency)
         deposit_error
       {_action, error} -> error
     end
