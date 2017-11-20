@@ -197,13 +197,17 @@ defmodule ExBanking.UserHandler.Backend do
   @doc """
   Make the actual call as per the logic of execute_operation.
   """
-  @spec execute_operation_do_call(user :: binary, pid :: pid, operation :: tuple)
-    :: success :: term | banking_error
-  defp execute_operation_do_call(user, pid, operation) do
+  @spec execute_operation_do_call(user :: binary, pid :: pid, operation :: tuple,
+    call_timeout :: number, call_try :: number)
+      :: success :: term | banking_error
+  defp execute_operation_do_call(user, pid, operation, call_timeout \\ 5000, call_try \\ 1) do
     try do
-      GenServer.call(pid, operation)
-    catch :exit, {:noproc, _} ->
-      user |> get_pid() |> GenServer.call(operation)
+      GenServer.call(pid, operation, call_timeout)
+    catch
+      :exit, {:noproc, _} ->
+          user |> get_pid() |> GenServer.call(operation, call_timeout)
+      :exit, {:timeout, _} when call_try <= 5 ->
+          execute_operation_do_call(user, pid, operation, min(call_timeout + (call_try * 150), 10000), call_try + 1)
     end
   end
 
