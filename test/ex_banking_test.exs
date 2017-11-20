@@ -119,7 +119,7 @@ defmodule ExBankingTest do
         Task.await(task)
       end)
       |> Enum.count(fn result -> result !== {:error, :too_many_requests_to_user} end)
-    
+
     assert successful_add_backlog_operations === 10
 
     Backend.remove_backlog("test_user")
@@ -149,6 +149,10 @@ defmodule ExBankingTest do
 
   test "sending from a user to another user when the sender has enough money succeeds" do
     assert ExBanking.send("test_user", "retest_user", 4, "EUR") === {:ok, 2.0, 14.0}
+  end
+
+  test "sending from a user to the same user when the user has enough money succeeds" do
+    assert ExBanking.send("test_user", "test_user", 2, "EUR") === {:ok, 2.0, 2.0}
   end
 
   test "getting the balance of a non existent user fails" do
@@ -188,9 +192,9 @@ defmodule ExBankingTest do
         Task.await(task)
       end)
       |> Enum.count(fn result -> result === {:error, :too_many_requests_to_sender} end)
-    
+
     assert_receive :sender_busy_done, 5000
-    
+
     assert error_count !== 0
   end
 
@@ -202,12 +206,12 @@ defmodule ExBankingTest do
       {:ok, sender_balance} = ExBanking.get_balance("test_user", "EUR")
 
       me = self()
-      
+
       spawn(fn ->
         Enum.each(1..100, fn _ -> ExBanking.deposit("retest_user", 1, "EUR") end)
         send(me, :receiver_busy_done)
       end)
-  
+
       results =
         1..100
         |> Enum.map(fn _ ->
@@ -223,7 +227,7 @@ defmodule ExBankingTest do
       end)
 
       {:ok, new_sender_balance} = ExBanking.get_balance("test_user", "EUR")
-      
+
       assert_receive :receiver_busy_done, 5000
       assert error_count !== 0
       assert new_sender_balance === (sender_balance - (100 - error_count))

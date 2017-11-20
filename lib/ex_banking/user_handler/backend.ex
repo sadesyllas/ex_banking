@@ -93,7 +93,7 @@ defmodule ExBanking.UserHandler.Backend do
           receiver_pid <- get_pid(receiver),
           {:backlog1, :ok} <- {:backlog1, try_add_backlog(sender)},
           {:backlog2, :ok} <- {:backlog2, try_add_backlog(receiver)} do
-        result = do_send(sender, sender_pid, receiver, receiver_pid, amount, currency)    
+        result = do_send(sender, sender_pid, receiver, receiver_pid, amount, currency)
         remove_backlog(sender)
         remove_backlog(receiver)
         result
@@ -221,7 +221,11 @@ defmodule ExBanking.UserHandler.Backend do
       {:deposit, {:ok, receiver_balance}} <-
         {:deposit, execute_operation_do_call(receiver, receiver_pid, {:deposit, receiver, amount, currency})}
     do
-      {:ok, sender_balance, receiver_balance}
+      if sender === receiver do
+        {:ok, receiver_balance, receiver_balance}
+      else
+        {:ok, sender_balance, receiver_balance}
+      end
     else
       {:deposit, deposit_error} ->
         execute_operation_do_call(sender, sender_pid, {:deposit, sender, amount, currency})
